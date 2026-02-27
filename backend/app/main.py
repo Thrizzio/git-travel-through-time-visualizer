@@ -5,12 +5,21 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.services.git_parser import GitParser
+from app.services.snapshot_builder import TemporalSnapshotBuilder as SnapshotBuilder
+from app.services.churn_calculator import ChurnCalculator
+
+from app.api.metrics import router as metrics_router
+
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("git-history-time-traveller")
+
+analysis_cache: dict[str, Any] = {}
 
 
 class AnalyzeRequest(BaseModel):
@@ -39,6 +48,8 @@ app = FastAPI(
     description="Backend orchestration API for timeline, debt heatmap, contributor graph, and risk panel.",
 )
 
+app.state.analysis_cache = {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,17 +58,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(metrics_router)
+
 
 def run_analysis(repo_path: str) -> dict[str, Any]:
-    """
-    Placeholder analysis pipeline orchestrator.
-    Real implementation will live in service modules.
-    """
     logger.info("Running analysis pipeline for repo_path=%s", repo_path)
+
+    parser = GitParser()
+    parser_result = parser.parse(repo_path)
+
+    commits = parser_result.commits
+
+    snapshot_builder = SnapshotBuilder()
+    snapshots = snapshot_builder.build(commits)
+
+    churn_calculator = ChurnCalculator()
+    file_metrics = churn_calculator.calculate(snapshots=snapshots)
+
     return {
         "status": "success",
-        "snapshots": [],
-        "summary": {},
+        "snapshots": [s.to_dict() for s in snapshots],
+        "summary": {
+            "total_commits": len(commits),
+            "file_metrics": [m.to_dict() for m in file_metrics],
+        },
     }
 
 
@@ -73,6 +97,7 @@ async def health() -> HealthResponse:
 async def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
     try:
         result = run_analysis(payload.repo_path)
+        app.state.analysis_cache["timeline"] = result["snapshots"]
         return AnalyzeResponse(
             status=result.get("status", "success"),
             snapshots=result.get("snapshots", []),

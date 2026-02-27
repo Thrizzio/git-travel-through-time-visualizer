@@ -1,4 +1,11 @@
-from pydantic import BaseSettings
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    try:
+        from pydantic.v1 import BaseSettings  # type: ignore
+    except ImportError:  # Pydantic v1 fallback
+        from pydantic import BaseSettings  # type: ignore
+    SettingsConfigDict = None  # type: ignore
 
 
 TDI_WEIGHTS = {
@@ -44,8 +51,11 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     REPO_BASE_PATH: str = "./repos"
 
-    class Config:
-        env_file = ".env"
+    if SettingsConfigDict is not None:
+        model_config = SettingsConfigDict(env_file=".env")
+    else:
+        class Config:
+            env_file = ".env"
 
 
 settings = Settings()
