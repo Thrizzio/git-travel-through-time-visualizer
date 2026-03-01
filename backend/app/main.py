@@ -1,9 +1,19 @@
 import logging
+import shutil
+import subprocess
+import tempfile
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+from app.services.git_parser import GitParser
+from app.services.snapshot_builder import TemporalSnapshotBuilder as SnapshotBuilder
+from app.services.churn_calculator import ChurnCalculator
+
+from app.api.metrics import router as metrics_router
+
 
 
 logging.basicConfig(
@@ -11,6 +21,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("git-history-time-traveller")
+
+analysis_cache: dict[str, Any] = {}
 
 
 class AnalyzeRequest(BaseModel):
@@ -39,6 +51,8 @@ app = FastAPI(
     description="Backend orchestration API for timeline, debt heatmap, contributor graph, and risk panel.",
 )
 
+app.state.analysis_cache = {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,17 +61,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(metrics_router)
+
 
 def run_analysis(repo_path: str) -> dict[str, Any]:
-    """
-    Placeholder analysis pipeline orchestrator.
-    Real implementation will live in service modules.
-    """
     logger.info("Running analysis pipeline for repo_path=%s", repo_path)
+
+    parser = GitParser()
+    parser_result = parser.parse(repo_path)
+
+    commits = parser_result.commits
+
+    snapshot_builder = SnapshotBuilder()
+    snapshots = snapshot_builder.build(commits)
+
+    churn_calculator = ChurnCalculator()
+    file_metrics = churn_calculator.calculate(commits=commits)
+
     return {
         "status": "success",
-        "snapshots": [],
-        "summary": {},
+        "snapshots": [s.to_dict() for s in snapshots],
+        "summary": {
+            "total_commits": len(commits),
+            "file_metrics": [m.to_dict() for m in file_metrics],
+        },
     }
 
 
@@ -71,8 +98,40 @@ async def health() -> HealthResponse:
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
+    temp_dir: str | None = None
     try:
-        result = run_analysis(payload.repo_path)
+        repo_path = payload.repo_path
+        analysis_repo_path = repo_path
+
+        if repo_path.startswith("http"):
+            temp_dir = tempfile.mkdtemp()
+
+            try:
+                subprocess.run(
+                    [
+                        "git",
+                        "-c",
+                        "core.longpaths=true",  # FIX Windows long path issue
+                        "clone",
+                        repo_path,
+                        temp_dir,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as clone_error:
+                logger.error("Git clone failed: %s", clone_error.stderr)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Git clone failed: {clone_error.stderr.strip()}",
+                )
+
+            analysis_repo_path = temp_dir
+
+        result = run_analysis(analysis_repo_path)
+        app.state.analysis_cache["timeline"] = result["snapshots"]
         return AnalyzeResponse(
             status=result.get("status", "success"),
             snapshots=result.get("snapshots", []),
@@ -81,6 +140,12 @@ async def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
     except Exception as exc:
         logger.exception("Analysis failed for repo_path=%s", payload.repo_path)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}") from exc
+    finally:
+        if temp_dir is not None:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                logger.exception("Failed to clean up temporary directory: %s", temp_dir)
 
 
 @app.get("/summary", response_model=SummaryResponse)
