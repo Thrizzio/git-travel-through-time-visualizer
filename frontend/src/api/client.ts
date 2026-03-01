@@ -1,7 +1,7 @@
 import type { TimelineSnapshot } from "../types/metrics";
 
 export async function fetchTimeline(): Promise<TimelineSnapshot[]> {
-  const res = await fetch("http://127.0.0.1:8000/metrics/timeline");
+  const res = await fetch("https://git-travel-through-time-visualizer.onrender.com/metrics/timeline");
   if (!res.ok) {
     throw new Error("Failed to fetch timeline");
   }
