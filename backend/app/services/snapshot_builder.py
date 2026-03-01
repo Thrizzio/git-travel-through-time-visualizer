@@ -14,6 +14,12 @@ class SnapshotChurn:
 @dataclass(frozen=True, slots=True)
 class Snapshot:
     timestamp: int
+    commit_hash: str
+    author: str
+    email: str
+    message: str
+    files_changed: int
+
     active_files: tuple[str, ...]
     file_sizes: tuple[tuple[str, int], ...]
     churn: SnapshotChurn
@@ -34,6 +40,11 @@ class Snapshot:
                 author: share for author, share in self.contributor_distribution
             },
             "complexity": self.complexity,
+            "commit_hash": self.commit_hash,
+            "author": self.author,
+            "email": self.email,
+            "message": self.message,
+            "files_changed": self.files_changed,
         }
 
 
@@ -67,32 +78,44 @@ class TemporalSnapshotBuilder:
 
         for commit in commits:
             timestamp = int(self._read_field(commit, "timestamp", 0))
-            author = str(
-                self._read_field(
-                    commit,
-                    "author_email",
-                    self._read_field(commit, "author_name", "unknown"),
-                )
-            )
+            commit_hash = str(self._read_field(commit, "hash", ""))
+            author_name = str(self._read_field(commit, "author_name", "unknown"))
+            author_email = str(self._read_field(commit, "author_email", "unknown"))
+            message = str(self._read_field(commit, "message", ""))
+
+            file_changes = self._iter_file_changes(commit)
+            files_changed = len(file_changes)
 
             if self.mode != "commit":
                 while timestamp > current_window_end:
                     snapshots.append(
-                        self._freeze_snapshot(
-                            timestamp=current_window_end,
-                            file_sizes=file_sizes,
-                            lines_added=window_lines_added,
-                            lines_deleted=window_lines_deleted,
-                            contributor_churn=contributor_churn,
-                        )
-                    )
-                    current_window_end += self.window_seconds
-                    window_lines_added = 0
-                    window_lines_deleted = 0
-                    contributor_churn = {}
+                    self._freeze_snapshot(
+                    timestamp=timestamp,
+                    commit_hash=commit_hash,
+                    author=author_name,
+                    email=author_email,
+                    message=message,
+                    files_changed=files_changed,
+                    file_sizes=file_sizes,
+                    lines_added=window_lines_added,
+                    lines_deleted=window_lines_deleted,
+                    contributor_churn=contributor_churn,
+                )
+            )
+            current_window_end += self.window_seconds
+            window_lines_added = 0
+            window_lines_deleted = 0
+            contributor_churn = {}
+            current_window_end += self.window_seconds
+            window_lines_added = 0
+            window_lines_deleted = 0
+            contributor_churn = {}
 
             author_delta = 0
-            for path, added, deleted in self._iter_file_changes(commit):
+            file_changes = self._iter_file_changes(commit)
+            files_changed = len(file_changes)
+
+            for path, added, deleted in file_changes:
                 previous_loc = file_sizes.get(path, 0)
                 next_loc = previous_loc + added - deleted
                 if next_loc <= 0:
@@ -105,12 +128,17 @@ class TemporalSnapshotBuilder:
                 author_delta += added + deleted
 
             if author_delta > 0:
-                contributor_churn[author] = contributor_churn.get(author, 0) + author_delta
+                contributor_churn[author_name] = contributor_churn.get(author_name, 0) + author_delta
 
             if self.mode == "commit":
                 snapshots.append(
                     self._freeze_snapshot(
                         timestamp=timestamp,
+                        commit_hash=commit_hash,
+                        author=author_name,
+                        email=author_email,
+                        message=message,
+                        files_changed=files_changed,
                         file_sizes=file_sizes,
                         lines_added=window_lines_added,
                         lines_deleted=window_lines_deleted,
@@ -123,7 +151,12 @@ class TemporalSnapshotBuilder:
             elif timestamp >= current_window_end:
                 snapshots.append(
                     self._freeze_snapshot(
-                        timestamp=current_window_end,
+                        timestamp=timestamp,
+                        commit_hash=commit_hash,
+                        author=author_name,
+                        email=author_email,
+                        message=message,
+                        files_changed=files_changed,
                         file_sizes=file_sizes,
                         lines_added=window_lines_added,
                         lines_deleted=window_lines_deleted,
@@ -139,7 +172,12 @@ class TemporalSnapshotBuilder:
             last_ts = int(self._read_field(commits[-1], "timestamp", current_window_end))
             snapshots.append(
                 self._freeze_snapshot(
-                    timestamp=max(last_ts, current_window_end - self.window_seconds),
+                    timestamp=timestamp,
+                    commit_hash=commit_hash,
+                    author=author_name,
+                    email=author_email,
+                    message=message,
+                    files_changed=files_changed,    
                     file_sizes=file_sizes,
                     lines_added=window_lines_added,
                     lines_deleted=window_lines_deleted,
@@ -155,6 +193,11 @@ class TemporalSnapshotBuilder:
     def _freeze_snapshot(
         self,
         timestamp: int,
+        commit_hash: str,
+        author: str,
+        email: str,
+        message: str,
+        files_changed: int,
         file_sizes: dict[str, int],
         lines_added: int,
         lines_deleted: int,
@@ -177,6 +220,11 @@ class TemporalSnapshotBuilder:
 
         return Snapshot(
             timestamp=timestamp,
+            commit_hash=commit_hash,
+            author=author,
+            email=email,
+            message=message,
+            files_changed=files_changed,
             active_files=active_files,
             file_sizes=file_sizes_tuple,
             churn=SnapshotChurn(

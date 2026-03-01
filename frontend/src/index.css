@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  background:
+  radial-gradient(circle at 20% 20%, rgba(99,102,241,0.15), transparent 40%),
+  radial-gradient(circle at 80% 70%, rgba(14,165,233,0.1), transparent 40%),
+  #020617;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+h1 {
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+
+h2 {
+  font-weight: 500;
+  opacity: 0.8;
+}

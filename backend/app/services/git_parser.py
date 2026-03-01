@@ -31,6 +31,7 @@ class CommitMetadata:
     author_name: str
     author_email: str
     timestamp: int
+    message: str = ""
     files_modified: int = 0
     lines_added: int = 0
     lines_deleted: int = 0
@@ -88,7 +89,7 @@ class GitParser:
             "--numstat",
             "--no-renames",
             f"--max-count={self.max_commits}",
-            f"--pretty=format:{_COMMIT_MARKER}{_FIELD_SEP}%H{_FIELD_SEP}%an{_FIELD_SEP}%ae{_FIELD_SEP}%at",
+            f"--pretty=format:{_COMMIT_MARKER}{_FIELD_SEP}%H{_FIELD_SEP}%an{_FIELD_SEP}%ae{_FIELD_SEP}%at{_FIELD_SEP}%s",
         ]
 
         process = subprocess.Popen(
@@ -193,16 +194,21 @@ class GitParser:
         if payload.startswith(_FIELD_SEP):
             payload = payload[1:]
         parts = payload.split(_FIELD_SEP)
-        if len(parts) != 4:
+        if len(parts) < 4:
             raise ValueError(f"Unexpected commit header format: {line}")
 
-        commit_hash, author_name, author_email, timestamp_str = parts
+        commit_hash = parts[0]
+        author_name = parts[1]
+        author_email = parts[2]
+        timestamp_str = parts[3]
+        message = parts[4] if len(parts) > 4 else ""
 
         return CommitMetadata(
             commit_hash=commit_hash,
             author_name=author_name,
             author_email=author_email,
-            timestamp=int(timestamp_str),
+            timestamp=int(timestamp_str),    
+            message=message,
         )
 
     @staticmethod
