@@ -32,7 +32,7 @@ export function useAnalysis() {
     const startTime = performance.now();
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/analyze", {
+      const res = await fetch("https://git-travel-through-time-visualizer.onrender.com/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_path: repoPath }),
